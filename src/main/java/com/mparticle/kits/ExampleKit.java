@@ -122,6 +122,7 @@ public class ExampleKit extends KitIntegration {
                     }
                 });
 
+
     }
     private static boolean isMinVersion() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
