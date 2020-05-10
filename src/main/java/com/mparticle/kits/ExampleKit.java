@@ -1,6 +1,21 @@
 package com.mparticle.kits;
 
 import android.content.Context;
+import android.os.Build;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.iid.FirebaseInstanceId;
+import com.google.firebase.iid.InstanceIdResult;
+import com.neura.resources.authentication.AnonymousAuthenticateCallBack;
+import com.neura.resources.authentication.AnonymousAuthenticateData;
+import com.neura.resources.authentication.AnonymousAuthenticationStateListener;
+import com.neura.sdk.object.AnonymousAuthenticationRequest;
+import com.neura.standalonesdk.service.NeuraApiClient;
+import com.neura.standalonesdk.util.SDKUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -26,6 +41,9 @@ import java.util.Map;
  *  - ./consumer-proguard.pro
  */
 public class ExampleKit extends KitIntegration {
+    private static final String TAG = KitIntegration.class.getSimpleName();
+
+    private NeuraApiClient mNeuraApiClient;
 
     @Override
     protected List<ReportingMessage> onKitCreate(Map<String, String> settings, Context context) {
@@ -44,7 +62,7 @@ public class ExampleKit extends KitIntegration {
     @Override
     public String getName() {
         //TODO: Replace this with your company name
-        return "Example";
+        return "Neura";
     }
 
 
@@ -55,5 +73,57 @@ public class ExampleKit extends KitIntegration {
         //TODO: If your SDK can not be opted out of, return null
         ReportingMessage optOutMessage = new ReportingMessage(this, ReportingMessage.MessageType.OPT_OUT, System.currentTimeMillis(), null);
         return null;
+    }
+
+    public void authenticateAnonymously(final AnonymousAuthenticationStateListener silentStateListener) {
+        if (!isMinVersion()) {
+            return;
+        }
+
+        if (mNeuraApiClient.isLoggedIn()) {
+            return;
+        }
+
+        //Get the FireBase Instance ID, we will use it to instantiate AnonymousAuthenticationRequest
+        FirebaseInstanceId.getInstance().getInstanceId()
+                .addOnCompleteListener(new OnCompleteListener<InstanceIdResult>() {
+                    @Override
+
+                    public void onComplete(@NonNull Task<InstanceIdResult> task) {
+                        if (!task.isSuccessful()) {
+                            Log.w(TAG, "getInstanceId failed", task.getException());
+                            return;
+                        }
+
+                        // Get new Instance ID token
+                        if (task.getResult() != null) {
+                            String pushToken = task.getResult().getToken();
+
+                            //Instantiate AnonymousAuthenticationRequest instance.
+                            AnonymousAuthenticationRequest request = new AnonymousAuthenticationRequest(pushToken);
+
+                            //Pass the AnonymousAuthenticationRequest instance and register a call back for success and failure events.
+                            mNeuraApiClient.authenticate(request, new AnonymousAuthenticateCallBack() {
+                                @Override
+                                public void onSuccess(AnonymousAuthenticateData data) {
+                                    mNeuraApiClient.registerAuthStateListener(silentStateListener);
+                                    Log.i(TAG, "Successfully requested authentication with neura. ");
+                                }
+
+                                @Override
+                                public void onFailure(int errorCode) {
+                                    mNeuraApiClient.unregisterAuthStateListener();
+                                    //Log.e(TAG, "Failed to authenticate with neura. " + "Reason : " + SDKUtils.errorCodeToString(errorCode));
+                                }
+                            });
+                        } else {
+                            Log.e(TAG, "Firebase task returned without result, cannot proceed with Authentication flow.");
+                        }
+                    }
+                });
+
+    }
+    private static boolean isMinVersion() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
     }
 }
