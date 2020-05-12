@@ -40,7 +40,7 @@ import java.util.Map;
  *  - ./src/main/AndroidManifest.xml
  *  - ./consumer-proguard.pro
  */
-public class ExampleKit extends KitIntegration {
+public class NeuraKit extends KitIntegration {
     private static final String TAG = KitIntegration.class.getSimpleName();
 
     private NeuraApiClient mNeuraApiClient;
