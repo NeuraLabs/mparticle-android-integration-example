@@ -1,31 +1,45 @@
 package com.mparticle.kits;
 
 import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.FirebaseOptions;
 import com.google.firebase.iid.FirebaseInstanceId;
 import com.google.firebase.iid.InstanceIdResult;
 import com.neura.resources.authentication.AnonymousAuthenticateCallBack;
 import com.neura.resources.authentication.AnonymousAuthenticateData;
 import com.neura.resources.authentication.AnonymousAuthenticationStateListener;
+import com.neura.resources.authentication.AuthenticationState;
 import com.neura.sdk.object.AnonymousAuthenticationRequest;
+import com.neura.standalonesdk.events.NeuraEvent;
+import com.neura.standalonesdk.events.NeuraEventCallBack;
+import com.neura.standalonesdk.events.NeuraPushCommandFactory;
 import com.neura.standalonesdk.service.NeuraApiClient;
-import com.neura.standalonesdk.util.SDKUtils;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  *
  * This is an mParticle kit, used to extend the functionality of mParticle SDK. Most Kits are wrappers/adapters
  * to a 3rd party SDK, primarily used to map analogous public mParticle APIs onto a 3rd-party API/platform.
  *
- *
+ *sss
  * Follow the steps below to implement your kit:
  *
  *  - Edit ./build.gradle to add any necessary dependencies, such as your company's SDK
@@ -40,38 +54,59 @@ import java.util.Map;
  *  - ./src/main/AndroidManifest.xml
  *  - ./consumer-proguard.pro
  */
-public class NeuraKit extends KitIntegration {
-    private static final String TAG = KitIntegration.class.getSimpleName();
+public class NeuraKit extends KitIntegration implements KitIntegration.PushListener{
 
     private NeuraApiClient mNeuraApiClient;
 
     @Override
     protected List<ReportingMessage> onKitCreate(Map<String, String> settings, Context context) {
-        /** TODO: Initialize your SDK here
-         * This method is analogous to Application#onCreate, and will be called once per app execution.
-         *
-         * If for some reason you can't start your SDK (such as settings are not present), you *must* throw an Exception
-         *
-         * If you forward any events on startup that are analagous to any mParticle messages types, return them here
-         * as ReportingMessage objects. Otherwise, return null.
-         */
+
+        HashMap newMap = new HashMap(settings);
+        String apiKey = (String) newMap.get("apiKey");
+        String appSecret = (String) newMap.get("appSecret");
+        try {
+            FirebaseApp.initializeApp(context);
+        } catch (IllegalStateException ex) {
+            FirebaseApp.initializeApp(getContext(), Objects.requireNonNull(FirebaseOptions.fromResource(getContext())));
+        }
+        mNeuraApiClient = NeuraApiClient.getClient(context, apiKey, appSecret);
+        authenticateAnonymously(new AnonymousAuthenticationStateListener() {
+            @Override
+            public void onStateChanged(AuthenticationState state) {
+                switch (state) {
+                    case AccessTokenRequested:
+                        break;
+                    case AuthenticatedAnonymously:
+                        // successful authentication
+                        mNeuraApiClient.unregisterAuthStateListener();
+                        break;
+                    case NotAuthenticated:
+                    case FailedReceivingAccessToken:
+                        // Authentication failed indefinitely. a good opportunity to retry the authentication flow
+                        mNeuraApiClient.unregisterAuthStateListener();
+                        break;
+                    default:
+                }
+            }
+        });
         return null;
     }
 
 
     @Override
     public String getName() {
-        //TODO: Replace this with your company name
         return "Neura";
     }
 
 
-
     @Override
     public List<ReportingMessage> setOptOut(boolean optedOut) {
-        //TODO: Disable or enable your SDK when a user opts out.
-        //TODO: If your SDK can not be opted out of, return null
-        ReportingMessage optOutMessage = new ReportingMessage(this, ReportingMessage.MessageType.OPT_OUT, System.currentTimeMillis(), null);
+        mNeuraApiClient.forgetMe(getCurrentActivity().get(), optedOut, new Handler.Callback() {
+            @Override
+            public boolean handleMessage(Message msg) {
+                return true;
+            }
+        });
         return null;
     }
 
@@ -91,33 +126,25 @@ public class NeuraKit extends KitIntegration {
 
                     public void onComplete(@NonNull Task<InstanceIdResult> task) {
                         if (!task.isSuccessful()) {
-                            Log.w(TAG, "getInstanceId failed", task.getException());
                             return;
                         }
 
                         // Get new Instance ID token
                         if (task.getResult() != null) {
                             String pushToken = task.getResult().getToken();
-
-                            //Instantiate AnonymousAuthenticationRequest instance.
                             AnonymousAuthenticationRequest request = new AnonymousAuthenticationRequest(pushToken);
-
                             //Pass the AnonymousAuthenticationRequest instance and register a call back for success and failure events.
                             mNeuraApiClient.authenticate(request, new AnonymousAuthenticateCallBack() {
                                 @Override
                                 public void onSuccess(AnonymousAuthenticateData data) {
                                     mNeuraApiClient.registerAuthStateListener(silentStateListener);
-                                    Log.i(TAG, "Successfully requested authentication with neura. ");
                                 }
 
                                 @Override
                                 public void onFailure(int errorCode) {
                                     mNeuraApiClient.unregisterAuthStateListener();
-                                    //Log.e(TAG, "Failed to authenticate with neura. " + "Reason : " + SDKUtils.errorCodeToString(errorCode));
                                 }
                             });
-                        } else {
-                            Log.e(TAG, "Firebase task returned without result, cannot proceed with Authentication flow.");
                         }
                     }
                 });
@@ -127,4 +154,34 @@ public class NeuraKit extends KitIntegration {
     private static boolean isMinVersion() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
     }
+
+    @Override
+    public boolean willHandlePushMessage(Intent intent) {
+        return true;
+    }
+
+    @Override
+    public void onPushMessageReceived(Context context, Intent intent) {
+        Bundle bundle = intent.getExtras();
+        String dataString = (String) bundle.get("pushData");
+        String typeString = (String) bundle.get("pushType");
+
+        Map<String, String> map = new HashMap<>();
+        map.put("pushData", dataString);
+        map.put("pushType", typeString);
+        NeuraPushCommandFactory pushCommand = NeuraPushCommandFactory.getInstance();
+        final Context appContext = getContext();
+        boolean isNeuraPush = pushCommand.isNeuraPush(appContext, map, new NeuraEventCallBack() {
+            @Override
+            public void neuraEventDetected(NeuraEvent event) {
+            }
+        });
+    }
+
+    @Override
+    public boolean onPushRegistration(String s, String s1) {
+        return true;
+    }
+
+
 }
